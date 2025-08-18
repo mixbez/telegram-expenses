@@ -11,7 +11,6 @@ async function createSpreadsheetForUser(telegramUserId) {
 
     const auth = getAuthenticatedClient(user.tokens);
     const sheets = google.sheets({ version: 'v4', auth });
-    const drive = google.drive({ version: 'v3', auth });
 
     // Create new spreadsheet
     const spreadsheet = await sheets.spreadsheets.create({
@@ -43,6 +42,10 @@ async function createSpreadsheetForUser(telegramUserId) {
     });
 
     const spreadsheetId = spreadsheet.data.spreadsheetId;
+    const sheetsMeta = spreadsheet.data.sheets;
+
+    const expensesSheetId = sheetsMeta.find(s => s.properties.title === 'Expenses')?.properties.sheetId;
+    const pivotSheetId = sheetsMeta.find(s => s.properties.title === 'Pivot Analysis')?.properties.sheetId;
 
     // Add headers to the first sheet
     await sheets.spreadsheets.values.update({
@@ -62,7 +65,7 @@ async function createSpreadsheetForUser(telegramUserId) {
           {
             repeatCell: {
               range: {
-                sheetId: 0,
+                sheetId: expensesSheetId,
                 startRowIndex: 0,
                 endRowIndex: 1,
                 startColumnIndex: 0,
@@ -84,8 +87,8 @@ async function createSpreadsheetForUser(telegramUserId) {
       }
     });
 
-    // Create pivot table on second sheet
-    await createPivotTable(spreadsheetId, auth);
+    // Create pivot table headers on second sheet
+    await createPivotTable(spreadsheetId, auth, pivotSheetId);
 
     // Update user record with spreadsheet ID
     await updateUserSpreadsheet(telegramUserId, spreadsheetId);
@@ -99,7 +102,7 @@ async function createSpreadsheetForUser(telegramUserId) {
   }
 }
 
-async function createPivotTable(spreadsheetId, auth) {
+async function createPivotTable(spreadsheetId, auth, pivotSheetId) {
   const sheets = google.sheets({ version: 'v4', auth });
 
   try {
@@ -110,7 +113,7 @@ async function createPivotTable(spreadsheetId, auth) {
           {
             updateCells: {
               range: {
-                sheetId: 1,
+                sheetId: pivotSheetId,
                 startRowIndex: 0,
                 endRowIndex: 1,
                 startColumnIndex: 0,
@@ -131,7 +134,7 @@ async function createPivotTable(spreadsheetId, auth) {
           {
             repeatCell: {
               range: {
-                sheetId: 1,
+                sheetId: pivotSheetId,
                 startRowIndex: 0,
                 endRowIndex: 1,
                 startColumnIndex: 0,
@@ -163,7 +166,6 @@ async function addExpenseToSheet(spreadsheetId, expense) {
   try {
     const user = await getUserByTelegramId(expense.telegramUserId);
     if (!user) {
-      // Find user by spreadsheet ID
       const { getUserBySpreadsheetId } = require('./database');
       const userBySheet = await getUserBySpreadsheetId(spreadsheetId);
       if (!userBySheet) {
@@ -175,7 +177,6 @@ async function addExpenseToSheet(spreadsheetId, expense) {
     const auth = getAuthenticatedClient(user.tokens);
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // Add the expense data
     await sheets.spreadsheets.values.append({
       spreadsheetId,
       range: 'Expenses!A:D',
@@ -190,7 +191,6 @@ async function addExpenseToSheet(spreadsheetId, expense) {
       }
     });
 
-    // Update pivot table data
     await updatePivotTable(spreadsheetId, auth);
 
     console.log('Expense added to spreadsheet:', expense);
@@ -204,7 +204,6 @@ async function updatePivotTable(spreadsheetId, auth) {
   try {
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // Get all expenses data
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
       range: 'Expenses!A2:D'
@@ -213,7 +212,6 @@ async function updatePivotTable(spreadsheetId, auth) {
     const rows = response.data.values || [];
     if (rows.length === 0) return;
 
-    // Aggregate data by source
     const aggregated = {};
     rows.forEach(row => {
       const [position, sum, date, source] = row;
@@ -224,20 +222,17 @@ async function updatePivotTable(spreadsheetId, auth) {
       aggregated[source].count += 1;
     });
 
-    // Prepare pivot table data
     const pivotData = Object.entries(aggregated).map(([source, data]) => [
       source,
       data.total.toFixed(2),
       data.count
     ]);
 
-    // Clear existing pivot data (except headers)
     await sheets.spreadsheets.values.clear({
       spreadsheetId,
       range: 'Pivot Analysis!A2:C'
     });
 
-    // Add new pivot data
     if (pivotData.length > 0) {
       await sheets.spreadsheets.values.update({
         spreadsheetId,
