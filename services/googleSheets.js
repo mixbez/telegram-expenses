@@ -164,7 +164,7 @@ async function createPivotTable(spreadsheetId, auth, pivotSheetId) {
 
 async function addExpenseToSheet(spreadsheetId, expense) {
   try {
-    const user = await getUserByTelegramId(expense.telegramUserId);
+    let user = await getUserByTelegramId(expense.telegramUserId);
     if (!user) {
       const { getUserBySpreadsheetId } = require('./database');
       const userBySheet = await getUserBySpreadsheetId(spreadsheetId);
